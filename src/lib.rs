@@ -66,6 +66,12 @@ pub use {
 #[derive(Derivative)]
 #[derivative(Default, Debug)]
 pub struct Context {
+    #[derivative(Default(value = "1f32"))]
+    old_zoom: f32,
+    #[derivative(Default(value = "1f32"))]
+    zoom: f32,
+    #[derivative(Default(value = "1f32"))]
+    target_zoom: f32,
     node_idx_submission_order: Vec<usize>,
     node_indices_overlapping_with_mouse: Vec<usize>,
     occluded_pin_indices: Vec<usize>,
@@ -124,6 +130,8 @@ pub struct Context {
     selected_node_indices: Vec<usize>,
     selected_link_indices: Vec<usize>,
 
+    highlighted_node_indices: HashMap<usize, std::time::Instant>,
+
     #[derivative(Default(value = "ClickInteractionType::None"))]
     click_interaction_type: ClickInteractionType,
     click_interaction_state: ClickInteractionState,
@@ -137,6 +145,10 @@ impl Context {
         links: impl IntoIterator<Item = (usize, usize, usize, LinkArgs)>,
         ui: &mut egui::Ui,
     ) -> egui::Response {
+        let old_style = std::sync::Arc::clone(ui.style());
+        for (_style, font_id) in ui.style_mut().text_styles.iter_mut() {
+            font_id.size = font_id.size * self.zoom;
+        }
         let rect = ui.available_rect_before_wrap();
         self.canvas_rect_screen_space = rect;
         self.canvas_origin_screen_space = self.canvas_rect_screen_space.min.to_vec2();
@@ -267,6 +279,9 @@ impl Context {
                 0.0,
                 (1.0, self.style.colors[ColorStyle::GridLine as usize]),
             );
+            self.set_zoom(self.target_zoom);
+            self.update_zoom();
+            ui.set_style(old_style);
             response
         }
     }
@@ -485,6 +500,19 @@ impl Context {
     pub fn get_node_dimensions(&self, id: usize) -> Option<egui::Vec2> {
         self.nodes.find(id).map(|x| self.nodes.pool[x].rect.size())
     }
+
+    pub fn set_zoom(&mut self, new_zoom: f32) {
+        self.old_zoom = self.target_zoom;
+        self.target_zoom = new_zoom;
+    }
+
+    pub fn update_zoom(&mut self) {
+        self.zoom = self.target_zoom * 0.5 + self.zoom * 0.5;
+    }
+
+    pub fn target_zoom(&self) -> f32 {
+        self.target_zoom
+    }
 }
 
 impl Context {
@@ -505,11 +533,19 @@ impl Context {
         node.background_shape.replace(ui.painter().add(egui::Shape::Noop));
         node.id = id;
         let node_origin = node.origin;
-        let node_size = node.size;
-        let title_space = node.layout_style.padding.y;
+        let node_size = node.size * self.zoom;
+        let title_space = node.layout_style.padding.y * self.zoom;
+        let zoomed_origin = egui::Pos2::new(node_origin.x * self.zoom, node_origin.y * self.zoom);
+
+        let size = self.canvas_rect_screen_space.size();
+        let zoomed_size = size * self.zoom;
+        let central_zooming_shift = (size - zoomed_size) * 0.5;
 
         let response = ui.allocate_ui_at_rect(
-            egui::Rect::from_min_size(self.grid_space_to_screen_space(node_origin), node_size),
+            egui::Rect::from_min_size(
+                self.grid_space_to_screen_space(zoomed_origin) + central_zooming_shift,
+                node_size,
+            ),
             |ui| {
                 let mut title_info = None;
                 if let Some(title) = title {
@@ -650,7 +686,7 @@ impl Context {
     }
 
     fn grid_space_to_screen_space(&self, v: egui::Pos2) -> egui::Pos2 {
-        v + self.canvas_origin_screen_space + self.panning
+        v + self.canvas_origin_screen_space + self.panning * self.zoom
     }
 
     fn grid_space_to_editor_spcae(&self, v: egui::Pos2) -> egui::Pos2 {
@@ -809,11 +845,24 @@ impl Context {
 
         ui.painter().set(
             link_shape,
-            link_data.draw((self.style.link_thickness, link_color)),
+            link_data.draw((self.style.link_thickness * self.zoom, link_color)),
         );
     }
 
     fn draw_node(&mut self, node_idx: usize, ui: &mut egui::Ui) {
+        let is_highlighted =
+            if let Some(started_highlight) = self.highlighted_node_indices.get(&node_idx) {
+                if std::time::Instant::now().duration_since(*started_highlight)
+                    > std::time::Duration::from_secs(3)
+                {
+                    self.highlighted_node_indices.remove(&node_idx);
+                    false
+                } else {
+                    true
+                }
+            } else {
+                false
+            };
         let node = &mut self.nodes.pool[node_idx];
 
         let node_hovered = self.hovered_node_index == Some(node_idx)
@@ -822,6 +871,10 @@ impl Context {
         let mut node_background = node.color_style.background;
         let mut titlebar_background = node.color_style.titlebar;
 
+        if is_highlighted {
+            node.color_style.outline = egui::Color32::WHITE;
+            titlebar_background = egui::Color32::BLACK;
+        }
         if self.selected_node_indices.contains(&node_idx) {
             node_background = node.color_style.background_selected;
             titlebar_background = node.color_style.titlebar_selected;
@@ -928,7 +981,7 @@ impl Context {
 
     fn translate_selected_nodes(&mut self) {
         if self.left_mouse_dragging {
-            let delta = self.mouse_delta;
+            let delta = self.mouse_delta / self.zoom;
             for idx in self.selected_node_indices.iter() {
                 let node = &mut self.nodes.pool[*idx];
                 if node.draggable {
@@ -1156,7 +1209,7 @@ impl Context {
             }
             ClickInteractionType::Panning => {
                 if self.alt_mouse_dragging || self.alt_mouse_clicked {
-                    self.panning += self.mouse_delta;
+                    self.panning += self.mouse_delta / self.zoom;
                 } else {
                     self.click_interaction_type = ClickInteractionType::None;
                 }
@@ -1245,6 +1298,12 @@ impl Context {
 
             self.node_depth_order.retain(|x| *x != idx);
             self.node_depth_order.push(idx);
+        }
+    }
+
+    pub fn highlight_node(&mut self, idx: usize) {
+        if let Some(id) = self.nodes.map.get(&idx) {
+            self.highlighted_node_indices.insert(*id, std::time::Instant::now());
         }
     }
 }
