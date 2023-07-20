@@ -196,7 +196,7 @@ pub struct Style {
 impl Default for Style {
     fn default() -> Self {
         Self {
-            grid_spacing: 32.0,
+            grid_spacing: 256.0,
             node_corner_rounding: 4.0,
             node_padding_horizontal: 8.0,
             node_padding_vertical: 8.0,

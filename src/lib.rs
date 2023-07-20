@@ -186,10 +186,6 @@ impl Context {
                     self.style.colors[ColorStyle::GridBackground as usize],
                 );
 
-                if (self.style.flags & StyleFlags::GridLines as usize) != 0 {
-                    self.draw_grid(self.canvas_rect_screen_space.size(), ui);
-                }
-
                 let links = links.into_iter().collect::<Vec<_>>();
                 for (id, start, end, args) in links {
                     self.add_link(id, start, end, args, ui);
@@ -655,32 +651,6 @@ impl Context {
         }
     }
 
-    fn draw_grid(&self, canvas_size: egui::Vec2, ui: &mut egui::Ui) {
-        let mut x = self.panning.x.rem_euclid(self.style.grid_spacing);
-        while x < canvas_size.x {
-            ui.painter().line_segment(
-                [
-                    self.editor_space_to_screen_space([x, 0.0].into()),
-                    self.editor_space_to_screen_space([x, canvas_size.y].into()),
-                ],
-                (1.0, self.style.colors[ColorStyle::GridLine as usize]),
-            );
-            x += self.style.grid_spacing;
-        }
-
-        let mut y = self.panning.y.rem_euclid(self.style.grid_spacing);
-        while y < canvas_size.y {
-            ui.painter().line_segment(
-                [
-                    self.editor_space_to_screen_space([0.0, y].into()),
-                    self.editor_space_to_screen_space([canvas_size.x, y].into()),
-                ],
-                (1.0, self.style.colors[ColorStyle::GridLine as usize]),
-            );
-            y += self.style.grid_spacing;
-        }
-    }
-
     fn screen_space_to_grid_space(&self, v: egui::Pos2) -> egui::Pos2 {
         v - self.canvas_origin_screen_space - self.panning
     }
@@ -695,10 +665,6 @@ impl Context {
 
     fn editor_space_to_grid_spcae(&self, v: egui::Pos2) -> egui::Pos2 {
         v - self.panning
-    }
-
-    fn editor_space_to_screen_space(&self, v: egui::Pos2) -> egui::Pos2 {
-        v + self.canvas_origin_screen_space
     }
 
     fn get_screen_space_pin_coordinates(&self, pin: &PinData) -> egui::Pos2 {
