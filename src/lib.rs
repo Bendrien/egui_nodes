@@ -206,8 +206,10 @@ impl Context {
                 ui.id().with("Input"),
                 egui::Sense::click_and_drag(),
             );
+            // Calling this from within the closure causes a deadlock!
+            let hover_pos = response.hover_pos();
             ui.ctx().input(|io| {
-                let mouse_pos = if let Some(mouse_pos) = response.hover_pos() {
+                let mouse_pos = if let Some(mouse_pos) = hover_pos {
                     self.mouse_in_canvas = true;
                     mouse_pos
                 } else {
